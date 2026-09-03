@@ -6,10 +6,10 @@ from pathlib import Path
 
 from ..adapters.store.jsonl import JsonlDecisionStore
 from ..domain.market import MarketSpec
-from ..domain.models import NewsItem, OHLCV
+from ..domain.models import NewsItem
 from ..domain.risk import RiskConfig
 from ..domain.strategy import TechnicalNewsStrategy
-from .backtest import BacktestResult, run_backtest
+from .backtest import BacktestResult, PriceData, run_backtest
 
 
 class PaperBroker:
@@ -27,16 +27,16 @@ class PaperBroker:
 
     def run(
         self,
-        bars: list[OHLCV],
+        data: PriceData,
         strategy: TechnicalNewsStrategy,
         log_path: str | Path,
         news: list[NewsItem] | None = None,
         append: bool = False,
     ) -> BacktestResult:
-        """Replay the bars and write one log line per evaluated day."""
+        """Replay the bars and write one log line per evaluated symbol-day."""
         with JsonlDecisionStore(log_path, append=append) as store:
             return run_backtest(
-                bars,
+                data,
                 strategy,
                 self.initial_cash,
                 self.commission_rate,

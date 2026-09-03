@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date as Date
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 from ..adapters.broker.simulated import SimulatedBroker
 from ..domain.market import JAPAN, MarketSpec
@@ -11,8 +11,11 @@ from ..domain.models import Decision, NewsItem, OHLCV, Signal, Trade
 from ..domain.portfolio import Portfolio
 from ..domain.risk import RiskConfig, RiskManager
 from ..domain.strategy import TechnicalNewsStrategy
+from ..domain.universe import Universe
 from ..ports import DecisionStore
 from .engine import run_engine
+
+PriceData = Universe | Mapping[str, Iterable[OHLCV]] | Iterable[OHLCV]
 
 
 @dataclass(frozen=True)
@@ -22,10 +25,10 @@ class BacktestResult:
     final_equity: float
     metrics: PerformanceMetrics
     trades: tuple[Trade, ...]
-    signals: tuple[Signal, ...]
+    signals: dict[str, tuple[Signal, ...]]
     decisions: tuple[Decision, ...]
     equity_curve: tuple[tuple[Date, float], ...]
-    pending_signal: Signal | None
+    pending_signals: tuple[Signal, ...]
 
     @property
     def return_rate(self) -> float:
@@ -42,16 +45,19 @@ class BacktestResult:
             "final_equity": self.final_equity,
             "metrics": self.metrics.to_dict(),
             "trades": [trade.to_dict() for trade in self.trades],
-            "signals": [signal.to_dict() for signal in self.signals],
+            "signals": {
+                symbol: [signal.to_dict() for signal in series]
+                for symbol, series in self.signals.items()
+            },
             "equity_curve": [{"date": day, "equity": equity} for day, equity in self.equity_curve],
-            "pending_signal": self.pending_signal.to_dict() if self.pending_signal else None,
+            "pending_signals": [signal.to_dict() for signal in self.pending_signals],
         }
 
 
 def run_backtest(
-    bars: list[OHLCV],
+    data: PriceData,
     strategy: TechnicalNewsStrategy,
-    initial_cash: float = 100_000,
+    initial_cash: float = 1_000_000,
     commission_rate: float = 0.001,
     news: list[NewsItem] | None = None,
     *,
@@ -62,13 +68,15 @@ def run_backtest(
 ) -> BacktestResult:
     if initial_cash <= 0:
         raise ValueError("initial_cash must be positive")
+    universe = Universe.of(data)
     spec = _market_spec(market, commission_rate)
     portfolio = Portfolio(initial_cash)
-    if not bars:
-        empty_metrics = compute((), (), initial_cash, 0.0, 0.0)
-        return BacktestResult(initial_cash, initial_cash, initial_cash, empty_metrics, (), (), (), (), None)
+    if universe.is_empty():
+        empty = compute((), (), initial_cash, None, 0.0)
+        return BacktestResult(initial_cash, initial_cash, initial_cash, empty, (), {}, (), (), ())
+
     result = run_engine(
-        bars=bars,
+        universe=universe,
         strategy=strategy,
         portfolio=portfolio,
         risk=RiskManager(risk_config, spec),
@@ -76,13 +84,12 @@ def run_backtest(
         store=store,
         news=news,
     )
-    final_equity = result.equity_curve[-1][1]
-    buy_and_hold = bars[-1].close / bars[0].open - 1
+    final_equity = result.equity_curve[-1][1] if result.equity_curve else initial_cash
     metrics = compute(
         result.equity_curve,
         result.trades,
         initial_cash,
-        buy_and_hold,
+        buy_and_hold_return_rate(universe),
         portfolio.total_commission,
     )
     return BacktestResult(
@@ -94,8 +101,18 @@ def run_backtest(
         signals=result.signals,
         decisions=result.decisions,
         equity_curve=result.equity_curve,
-        pending_signal=result.pending_signal,
+        pending_signals=result.pending_signals,
     )
+
+
+def buy_and_hold_return_rate(universe: Universe) -> float | None:
+    """Equal-weighted buy at each symbol's first open, held to its last close."""
+    returns = []
+    for symbol in universe.symbols:
+        bars = universe.bars(symbol)
+        if bars[0].open > 0:
+            returns.append(bars[-1].close / bars[0].open - 1)
+    return sum(returns) / len(returns) if returns else None
 
 
 def _market_spec(market: MarketSpec | None, commission_rate: float) -> MarketSpec:

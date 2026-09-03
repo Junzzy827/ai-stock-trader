@@ -306,12 +306,14 @@ class SqliteStore:
         return cursor.rowcount > 0
 
     # --- queries -------------------------------------------------------
-    def latest_proposal(self) -> dict[str, Any] | None:
-        row = self._connection.execute(
-            "SELECT * FROM proposals WHERE account = ? ORDER BY date DESC LIMIT 1",
-            (self.account,),
-        ).fetchone()
-        return dict(row) if row else None
+    def pending_proposals(self) -> list[dict[str, Any]]:
+        """Every proposal from the most recent proposal date, one per symbol."""
+        rows = self._connection.execute(
+            "SELECT * FROM proposals WHERE account = ? AND date = "
+            "(SELECT MAX(date) FROM proposals WHERE account = ?) ORDER BY symbol",
+            (self.account, self.account),
+        )
+        return [dict(row) for row in rows]
 
     def equity_curve(self) -> list[tuple[date, float]]:
         return [

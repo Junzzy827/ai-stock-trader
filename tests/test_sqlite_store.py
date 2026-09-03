@@ -111,11 +111,11 @@ def test_equity_history_is_ordered_and_deduplicated(store):
 def test_a_proposal_can_be_approved_by_a_human(store):
     store.record_proposal(Signal(date(2025, 1, 8), "TEST", BUY, 0.3, "stub", 0.3, 0.0))
     store.commit()
-    assert store.latest_proposal()["status"] == "PROPOSED"
+    assert store.pending_proposals()[0]["status"] == "PROPOSED"
 
     assert store.decide_proposal(date(2025, 1, 8), "TEST", APPROVED, "checked") is True
     store.commit()
-    proposal = store.latest_proposal()
+    proposal = store.pending_proposals()[0]
     assert (proposal["status"], proposal["note"]) == (APPROVED, "checked")
     assert proposal["decided_at"] is not None
 
@@ -130,7 +130,7 @@ def test_re_recording_a_proposal_keeps_the_human_verdict(store):
     store.decide_proposal(date(2025, 1, 8), "TEST", REJECTED, "見送り")
     store.record_proposal(signal)
     store.commit()
-    assert store.latest_proposal()["status"] == REJECTED
+    assert store.pending_proposals()[0]["status"] == REJECTED
 
 
 def test_uncommitted_writes_are_discarded_on_rollback(store):

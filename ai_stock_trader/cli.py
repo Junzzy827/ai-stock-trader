@@ -11,22 +11,29 @@ from .app.backtest import run_backtest
 from .app.daily import run_daily
 from .app.paper import PaperBroker
 from .app.status import account_status
-from .domain.market import JAPAN, MarketSpec
-from .domain.risk import RiskConfig
+from .config import AppConfig, load_config
 from .domain.strategy import TechnicalNewsStrategy
 
 
+def _add_account_arguments(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument("--config", help="TOML config path")
+    sub.add_argument("--db", dest="database", help="SQLite state file")
+    sub.add_argument("--account")
+
+
 def _add_market_arguments(sub: argparse.ArgumentParser) -> None:
-    sub.add_argument("--csv", required=True, help="normalized OHLCV CSV path")
-    sub.add_argument("--symbol", required=True, help="symbol to evaluate")
-    sub.add_argument("--commission", type=float, default=0.001)
-    sub.add_argument("--rss", action="append", default=[], help="RSS URL; may be repeated")
-    sub.add_argument("--lot-size", type=int, default=JAPAN.lot_size, help="shares per lot (TSE default 100)")
-    sub.add_argument("--slippage", type=float, default=0.0, help="fraction added to the fill price")
-    sub.add_argument("--max-weight", type=float, default=1.0, help="max fraction of equity in one position")
-    sub.add_argument("--cash-buffer", type=float, default=0.0, help="fraction of cash kept unspent")
-    sub.add_argument("--stop-loss", type=float, help="fixed stop as a fraction below the entry price")
-    sub.add_argument("--trailing-stop", type=float, help="trailing stop as a fraction below the peak close")
+    sub.add_argument("--csv", help="normalized OHLCV CSV path")
+    sub.add_argument("--symbol", dest="symbols", action="append", help="symbol; may be repeated")
+    sub.add_argument("--rss", action="append", help="RSS URL; may be repeated")
+    sub.add_argument("--capital", type=float)
+    sub.add_argument("--commission", dest="commission_rate", type=float)
+    sub.add_argument("--lot-size", type=int, help="shares per lot (TSE default 100)")
+    sub.add_argument("--slippage", dest="slippage_rate", type=float)
+    sub.add_argument("--max-weight", dest="max_position_weight", type=float)
+    sub.add_argument("--cash-buffer", type=float, dest="cash_buffer")
+    sub.add_argument("--stop-loss", dest="stop_loss_pct", type=float)
+    sub.add_argument("--trailing-stop", dest="trailing_stop_pct", type=float)
+    sub.add_argument("--max-positions", type=int, help="symbols that may be held at once")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,26 +42,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command in ("backtest", "paper", "daily"):
         sub = subparsers.add_parser(command)
+        _add_account_arguments(sub)
         _add_market_arguments(sub)
-        sub.add_argument("--capital", type=float, default=1_000_000)
 
     subparsers.choices["backtest"].add_argument("--output", help="write JSON result to this path")
     subparsers.choices["paper"].add_argument("--log", default="paper_decisions.jsonl")
     subparsers.choices["paper"].add_argument("--append", action="store_true", help="append to an existing log")
 
-    daily = subparsers.choices["daily"]
-    daily.add_argument("--db", default="trader.db", help="SQLite state file")
-    daily.add_argument("--account", default="default")
-
     status = subparsers.add_parser("status")
-    status.add_argument("--db", default="trader.db")
-    status.add_argument("--account", default="default")
+    _add_account_arguments(status)
     status.add_argument("--recent", type=int, default=10, help="decisions to include")
 
     for command in ("approve", "reject"):
         decide = subparsers.add_parser(command)
-        decide.add_argument("--db", default="trader.db")
-        decide.add_argument("--account", default="default")
+        _add_account_arguments(decide)
         decide.add_argument("--date", required=True, help="proposal date (YYYY-MM-DD)")
         decide.add_argument("--symbol", required=True)
         decide.add_argument("--note", default="")
@@ -62,20 +63,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _risk_config(args: argparse.Namespace) -> RiskConfig:
-    return RiskConfig(
-        max_position_weight=args.max_weight,
-        cash_buffer=args.cash_buffer,
-        stop_loss_pct=args.stop_loss,
-        trailing_stop_pct=args.trailing_stop,
-    )
-
-
-def _news(args: argparse.Namespace) -> list:
-    news = []
-    for rss_url in args.rss:
-        news.extend(fetch_rss_news(rss_url))
-    return news
+def resolve_config(args: argparse.Namespace) -> AppConfig:
+    base = load_config(args.config) if args.config else AppConfig()
+    overrides = {
+        key: getattr(args, key, None)
+        for key in (
+            "account",
+            "capital",
+            "database",
+            "csv",
+            "symbols",
+            "rss",
+            "slippage_rate",
+            "lot_size",
+            "commission_rate",
+            "max_position_weight",
+            "cash_buffer",
+            "stop_loss_pct",
+            "trailing_stop_pct",
+            "max_positions",
+        )
+    }
+    return base.with_overrides(**overrides)
 
 
 def _print(payload: dict) -> None:
@@ -84,9 +93,10 @@ def _print(payload: dict) -> None:
 
 def main() -> None:
     args = build_parser().parse_args()
+    config = resolve_config(args)
 
     if args.command in ("status", "approve", "reject"):
-        with SqliteStore(args.db, args.account) as store:
+        with SqliteStore(config.database, config.account) as store:
             if args.command == "status":
                 _print(account_status(store, args.recent).to_dict())
                 return
@@ -98,24 +108,28 @@ def main() -> None:
             _print({"date": args.date, "symbol": args.symbol, "status": status, "note": args.note})
             return
 
-    bars = CsvPriceDataSource(args.csv).prices(args.symbol)
-    if len(bars) < 2:
-        raise SystemExit("at least two bars for the selected symbol are required")
-    strategy = TechnicalNewsStrategy()
-    market = MarketSpec(lot_size=args.lot_size, commission_rate=args.commission)
-    risk_config = _risk_config(args)
-    news = _news(args)
+    if not config.csv:
+        raise SystemExit("a price CSV is required: pass --csv or set [data].csv in the config")
+    try:
+        universe = CsvPriceDataSource(config.csv).universe(config.symbols or None)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if len(universe.timeline) < 2:
+        raise SystemExit("at least two dates are required to execute a signal")
+
+    strategy = TechnicalNewsStrategy(config.strategy)
+    news = [item for url in config.rss for item in fetch_rss_news(url)]
 
     if args.command == "backtest":
         result = run_backtest(
-            bars,
+            universe,
             strategy,
-            args.capital,
-            args.commission,
+            config.capital,
+            config.market.commission_rate,
             news,
-            risk_config=risk_config,
-            market=market,
-            slippage_rate=args.slippage,
+            risk_config=config.risk,
+            market=config.market,
+            slippage_rate=config.slippage_rate,
         )
         output = json.dumps(result.to_dict(), ensure_ascii=False, indent=2, default=str)
         print(output)
@@ -125,30 +139,31 @@ def main() -> None:
         return
 
     if args.command == "paper":
-        result = PaperBroker(args.capital, args.commission, risk_config, market).run(
-            bars, strategy, args.log, news, append=args.append
-        )
+        result = PaperBroker(
+            config.capital, config.market.commission_rate, config.risk, config.market
+        ).run(universe, strategy, args.log, news, append=args.append)
         _print(
             {
                 "log": args.log,
+                "symbols": list(universe.symbols),
                 "decisions": len(result.decisions),
                 "trades": len(result.trades),
                 "final_equity": result.final_equity,
                 "metrics": result.metrics.to_dict(),
-                "pending_signal": result.pending_signal.to_dict() if result.pending_signal else None,
+                "pending_signals": [signal.to_dict() for signal in result.pending_signals],
             }
         )
         return
 
-    with SqliteStore(args.db, args.account) as store:
+    with SqliteStore(config.database, config.account) as store:
         result = run_daily(
             store,
-            bars,
+            universe,
             strategy,
-            initial_cash=args.capital,
-            risk_config=risk_config,
-            market=market,
-            slippage_rate=args.slippage,
+            initial_cash=config.capital,
+            risk_config=config.risk,
+            market=config.market,
+            slippage_rate=config.slippage_rate,
             news=news,
         )
         _print(result.to_dict())

@@ -87,9 +87,9 @@ def test_a_full_replay_and_an_incremental_run_reach_the_same_state(db_path, tmp_
 
 def test_the_latest_signal_is_stored_as_the_next_session_proposal(db_path):
     result = daily(db_path, bars([100] * 4), [HOLD, HOLD, HOLD, BUY])
-    assert result.pending_signal.action == BUY
+    assert result.pending_signals[0].action == BUY
     with SqliteStore(db_path) as store:
-        proposal = store.latest_proposal()
+        proposal = store.pending_proposals()[0]
     assert (proposal["action"], proposal["status"]) == (BUY, "PROPOSED")
 
 
@@ -116,3 +116,38 @@ def test_a_single_bar_cannot_be_executed(db_path):
     with SqliteStore(db_path) as store:
         with pytest.raises(ValueError):
             run_daily(store, bars([100]), StubStrategy([HOLD]))
+
+
+def test_a_universe_is_tracked_symbol_by_symbol_across_runs(db_path):
+    first = daily(
+        db_path,
+        bars([100] * 3, "A") + bars([100] * 3, "B"),
+        {"A": [BUY, HOLD, HOLD], "B": [HOLD, HOLD, BUY]},
+        RiskConfig(max_position_weight=0.5, max_positions=2),
+    )
+    assert first.symbols == ("A", "B")
+    assert [position.symbol for position in first.positions] == ["A"]
+
+    second = daily(
+        db_path,
+        bars([100] * 5, "A") + bars([100] * 5, "B"),
+        {"A": [HOLD] * 5, "B": [BUY] * 5},
+        RiskConfig(max_position_weight=0.5, max_positions=2),
+    )
+    assert sorted(position.symbol for position in second.positions) == ["A", "B"]
+    assert [trade.symbol for trade in second.trades] == ["B"]
+
+
+def test_a_symbol_dropped_from_the_universe_is_reported_and_marked_at_cost(db_path):
+    daily(db_path, bars([100] * 3, "A") + bars([100] * 3, "B"), {"A": [BUY, HOLD, HOLD], "B": [HOLD] * 3},
+          RiskConfig(max_position_weight=0.5, max_positions=2))
+    dropped = daily(db_path, bars([100] * 5, "B"), {"B": [HOLD] * 5})
+    assert dropped.stale_symbols == ("A",)
+    assert dropped.equity == pytest.approx(1_000_000)
+
+
+def test_a_proposal_is_stored_for_every_symbol(db_path):
+    daily(db_path, bars([100] * 3, "A") + bars([100] * 3, "B"), [HOLD] * 3)
+    with SqliteStore(db_path) as store:
+        proposals = store.pending_proposals()
+    assert [row["symbol"] for row in proposals] == ["A", "B"]

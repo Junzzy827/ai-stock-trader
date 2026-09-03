@@ -10,13 +10,14 @@ from ai_stock_trader.domain.market import MarketSpec
 from ai_stock_trader.domain.models import BUY, HOLD, SELL
 from ai_stock_trader.domain.portfolio import Portfolio
 from ai_stock_trader.domain.risk import RiskConfig, RiskManager
+from ai_stock_trader.domain.universe import Universe
 
 SPEC = MarketSpec(lot_size=100, commission_rate=0.0)
 
 
 def run(bars, actions, risk_config=None, cash=100_000):
     return run_engine(
-        bars=bars,
+        universe=Universe.of(bars),
         strategy=StubStrategy(actions),
         portfolio=Portfolio(cash),
         risk=RiskManager(risk_config or RiskConfig(), SPEC),
@@ -64,8 +65,8 @@ def test_hold_days_record_why_nothing_was_traded():
 def test_pending_signal_is_the_last_bar_without_an_execution_bar():
     bars = series([(100, 100, 100, 100)] * 3)
     result = run(bars, [HOLD, HOLD, BUY])
-    assert result.pending_signal.action == BUY
-    assert result.pending_signal.date == bars[-1].date
+    assert result.pending_signals[0].action == BUY
+    assert result.pending_signals[0].date == bars[-1].date
 
 
 def test_equity_curve_starts_at_the_initial_cash():

@@ -1,0 +1,30 @@
+# Copy to config.toml and edit. Command-line flags override anything set here.
+
+[account]
+name = "paper1"
+capital = 3000000
+database = "trader.db"
+
+[data]
+csv = "data/sample_universe.csv"
+symbols = ["7203", "6758", "9984"]
+# rss = ["https://example.com/news.xml"]
+
+[market]
+lot_size = 100          # TSE standard unit
+commission_rate = 0.001
+slippage_rate = 0.0
+
+[strategy]
+short_sma = 5
+long_sma = 20
+rsi_period = 14
+buy_threshold = 0.15
+sell_threshold = -0.2
+
+[risk]
+max_position_weight = 0.3   # at most 30% of equity in one name
+cash_buffer = 0.05          # always keep 5% in cash
+stop_loss_pct = 0.07
+trailing_stop_pct = 0.12
+max_positions = 3

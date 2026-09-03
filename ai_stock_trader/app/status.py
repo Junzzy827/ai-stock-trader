@@ -24,7 +24,7 @@ class AccountStatus:
     equity: float
     last_processed_date: Date | None
     positions: tuple[dict[str, Any], ...]
-    pending_proposal: dict[str, Any] | None
+    pending_proposals: tuple[dict[str, Any], ...]
     recent_decisions: tuple[Decision, ...]
     metrics: PerformanceMetrics | None
 
@@ -37,7 +37,7 @@ class AccountStatus:
             "equity": self.equity,
             "last_processed_date": self.last_processed_date.isoformat() if self.last_processed_date else None,
             "positions": list(self.positions),
-            "pending_proposal": self.pending_proposal,
+            "pending_proposals": list(self.pending_proposals),
             "recent_decisions": [decision.to_dict() for decision in self.recent_decisions],
             "metrics": self.metrics.to_dict() if self.metrics else None,
         }
@@ -46,7 +46,7 @@ class AccountStatus:
 def account_status(store: SqliteStore, recent: int = 10) -> AccountStatus:
     portfolio = store.load_portfolio()
     if portfolio is None:
-        return AccountStatus(store.account, False, 0.0, 0.0, 0.0, None, (), None, (), None)
+        return AccountStatus(store.account, False, 0.0, 0.0, 0.0, None, (), (), (), None)
 
     equity_curve = store.equity_curve()
     equity = equity_curve[-1][1] if equity_curve else portfolio.cash
@@ -73,7 +73,7 @@ def account_status(store: SqliteStore, recent: int = 10) -> AccountStatus:
         equity=equity,
         last_processed_date=store.last_processed_date(),
         positions=positions,
-        pending_proposal=store.latest_proposal(),
+        pending_proposals=tuple(store.pending_proposals()),
         recent_decisions=tuple(store.decisions(limit=recent)),
         metrics=metrics,
     )
