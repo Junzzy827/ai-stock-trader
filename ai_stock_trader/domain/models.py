@@ -35,6 +35,20 @@ class NewsItem:
     title: str
     summary: str = ""
     url: str = ""
+    # Symbols this item is about. Empty means market-wide: it can move every
+    # symbol rather than one, so it is never treated as symbol-specific.
+    symbols: tuple[str, ...] = ()
+    # When it was pulled, distinct from when it says it was published. RSS
+    # feeds only carry a moving window, so this is what backtests replay from
+    # an archive instead of a live fetch.
+    fetched_at: date | None = None
+
+    @property
+    def dedup_key(self) -> str:
+        return self.url or f"{self.title}|{self.published_at.isoformat()}"
+
+    def is_relevant_to(self, symbol: str) -> bool:
+        return not self.symbols or symbol in self.symbols
 
 
 @dataclass(frozen=True)

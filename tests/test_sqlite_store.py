@@ -148,3 +148,72 @@ def test_accounts_in_one_file_do_not_see_each_other(tmp_path):
         alice.commit()
     with SqliteStore(path, "bob") as bob:
         assert bob.load_portfolio() is None
+
+
+def test_save_news_reports_only_the_newly_inserted_count(store):
+    from ai_stock_trader.domain.models import NewsItem
+
+    items = [
+        NewsItem(date(2025, 1, 6), "記事1", url="http://x/1"),
+        NewsItem(date(2025, 1, 6), "記事2", url="http://x/2"),
+    ]
+    assert store.save_news(items) == 2
+    assert store.save_news(items) == 0
+    store.commit()
+
+
+def test_loaded_news_round_trips_symbols_and_fetched_at(store):
+    from ai_stock_trader.domain.models import NewsItem
+
+    item = NewsItem(date(2025, 1, 6), "トヨタ決算", "増益", "http://x/1", ("7203",), date(2025, 1, 7))
+    store.save_news([item])
+    store.commit()
+    assert store.load_news() == [item]
+
+
+def test_a_market_wide_item_with_no_url_round_trips_with_empty_symbols(store):
+    from ai_stock_trader.domain.models import NewsItem
+
+    item = NewsItem(date(2025, 1, 6), "市場全体高い")
+    store.save_news([item])
+    store.commit()
+    loaded = store.load_news()
+    assert (loaded[0].symbols, loaded[0].fetched_at) == ((), None)
+
+
+def test_load_news_can_be_filtered_by_a_since_date(store):
+    from ai_stock_trader.domain.models import NewsItem
+
+    store.save_news(
+        [
+            NewsItem(date(2025, 1, 5), "old", url="http://x/1"),
+            NewsItem(date(2025, 1, 8), "new", url="http://x/2"),
+        ]
+    )
+    store.commit()
+    recent = store.load_news(since=date(2025, 1, 7))
+    assert [item.title for item in recent] == ["new"]
+
+
+def test_load_news_is_ordered_by_publication_date(store):
+    from ai_stock_trader.domain.models import NewsItem
+
+    store.save_news(
+        [
+            NewsItem(date(2025, 1, 8), "second", url="http://x/2"),
+            NewsItem(date(2025, 1, 5), "first", url="http://x/1"),
+        ]
+    )
+    store.commit()
+    assert [item.title for item in store.load_news()] == ["first", "second"]
+
+
+def test_the_news_archive_is_shared_across_accounts_in_one_file(tmp_path):
+    from ai_stock_trader.domain.models import NewsItem
+
+    path = tmp_path / "trader.db"
+    with SqliteStore(path, "alice") as alice:
+        alice.save_news([NewsItem(date(2025, 1, 6), "shared item", url="http://x/1")])
+        alice.commit()
+    with SqliteStore(path, "bob") as bob:
+        assert [item.title for item in bob.load_news()] == ["shared item"]

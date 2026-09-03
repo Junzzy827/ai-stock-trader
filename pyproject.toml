@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-stock-trader"
-version = "0.3.0"
+version = "0.4.0"
 description = "A safe, semi-automatic stock-trading research and paper-trading foundation."
 requires-python = ">=3.11"  # tomllib
 dependencies = []

@@ -25,7 +25,21 @@ class NewsSource(Protocol):
 
 
 class NewsAnalyzer(Protocol):
-    def score(self, items: Iterable[NewsItem]) -> tuple[float, str]: ...
+    """Scores a symbol's news window. Each item carries its decay weight
+    (1.0 for today's news, smaller for older items still inside the window),
+    so a Claude-backed analyzer can lean on it too instead of recomputing it."""
+
+    def score(self, items: Iterable[tuple[NewsItem, float]]) -> tuple[float, str]: ...
+
+
+class NewsArchive(Protocol):
+    """Persists fetched news so a later backtest can replay exactly what was
+    known at the time, rather than whatever the RSS feed's moving window
+    still happens to contain."""
+
+    def save_news(self, items: Iterable[NewsItem]) -> int: ...
+
+    def load_news(self, since: Date | None = None) -> list[NewsItem]: ...
 
 
 class Broker(Protocol):

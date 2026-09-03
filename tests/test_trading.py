@@ -77,3 +77,41 @@ def test_us_market_spec_allows_single_share_lots():
     )
     assert result.trades
     assert result.trades[0].quantity % 100 != 0
+
+
+def test_a_same_day_headline_moves_the_signal_more_than_an_older_one():
+    from ai_stock_trader.domain.models import NewsItem
+
+    prices = [100] * 6
+    same_day = [NewsItem(date(2025, 1, 6), "増益で上方修正", symbols=("TEST",))]
+    two_days_old = [NewsItem(date(2025, 1, 4), "増益で上方修正", symbols=("TEST",))]
+
+    fresh = TechnicalNewsStrategy(FAST).generate(bars(prices), same_day)
+    stale = TechnicalNewsStrategy(FAST).generate(bars(prices), two_days_old)
+    index = 5  # date(2025, 1, 6)
+    assert fresh[index].news_score > stale[index].news_score > 0
+
+
+def test_news_tagged_for_another_symbol_does_not_affect_this_one():
+    from ai_stock_trader.domain.models import NewsItem
+
+    other_symbols_news = [NewsItem(date(2025, 1, 6), "増益で上方修正", symbols=("OTHER",))]
+    signals = TechnicalNewsStrategy(FAST).generate(bars([100] * 6), other_symbols_news)
+    assert signals[5].news_score == 0.0
+
+
+def test_market_wide_news_reaches_every_symbol_in_the_strategy():
+    from ai_stock_trader.domain.models import NewsItem
+
+    market_wide = [NewsItem(date(2025, 1, 6), "日経平均が急伸 growth")]
+    signals = TechnicalNewsStrategy(FAST).generate(bars([100] * 6, symbol="ANY"), market_wide)
+    assert signals[5].news_score > 0
+
+
+def test_news_outside_the_configured_window_does_not_move_the_signal():
+    from ai_stock_trader.domain.models import NewsItem
+
+    old_news = [NewsItem(date(2025, 1, 1), "増益で上方修正", symbols=("TEST",))]
+    narrow = StrategyConfig(short_sma=2, long_sma=3, rsi_period=2, news_window_days=1)
+    signals = TechnicalNewsStrategy(narrow).generate(bars([100] * 6), old_news)
+    assert signals[5].news_score == 0.0

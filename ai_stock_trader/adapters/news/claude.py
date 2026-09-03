@@ -17,12 +17,16 @@ class ClaudeNewsAnalyzer:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY is required for ClaudeNewsAnalyzer")
 
-    def score(self, items: Iterable[NewsItem]) -> tuple[float, str]:
-        payload_items = [{"title": item.title, "summary": item.summary, "url": item.url} for item in items]
+    def score(self, items: Iterable[tuple[NewsItem, float]]) -> tuple[float, str]:
+        payload_items = [
+            {"title": item.title, "summary": item.summary, "url": item.url, "recency_weight": round(weight, 3)}
+            for item, weight in items
+        ]
         if not payload_items:
             return 0.0, "no news"
         prompt = (
             "Evaluate the market impact of these headlines for a single stock. "
+            "Older or lower recency_weight headlines matter less. "
             "Return JSON only with score (-1 to 1) and reason (short Japanese text).\n"
             + json.dumps(payload_items, ensure_ascii=False)
         )

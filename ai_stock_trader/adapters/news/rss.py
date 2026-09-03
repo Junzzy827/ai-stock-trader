@@ -22,11 +22,15 @@ def _published_date(raw: str | None, fallback: date) -> date:
 
 
 def fetch_rss_news(url: str, timeout: int = 15) -> list[NewsItem]:
-    """Fetch a common RSS 2.0 feed without adding a runtime dependency."""
+    """Fetch a common RSS 2.0 feed without adding a runtime dependency.
+
+    ``fetched_at`` is stamped separately from ``published_at`` so a stored
+    archive can tell "when we learned this" from "when it happened".
+    """
     request = Request(url, headers={"User-Agent": "ai-stock-trader/0.1"})
     with urlopen(request, timeout=timeout) as response:  # noqa: S310 - URL is user-configured
         root = ET.fromstring(response.read())
-    fallback = date.today()
+    fetched_at = date.today()
     items: list[NewsItem] = []
     seen: set[str] = set()
     for item in root.findall(".//item"):
@@ -37,6 +41,6 @@ def fetch_rss_news(url: str, timeout: int = 15) -> list[NewsItem]:
         if not key or key in seen:
             continue
         seen.add(key)
-        published = _published_date(item.findtext("pubDate"), fallback)
-        items.append(NewsItem(published, title, summary, link))
+        published = _published_date(item.findtext("pubDate"), fetched_at)
+        items.append(NewsItem(published, title, summary, link, (), fetched_at))
     return items

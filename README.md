@@ -4,7 +4,8 @@
 
 - 日本株の取引慣行（単元100株、率手数料）を前提にした執行モデル
 - SMA / RSI / MACDによる説明可能なシグナル
-- RSSニュースとキーワード分析、任意のClaude分析アダプター
+- RSSニュースを銘柄に紐付け、減衰窓で重み付けするキーワード分析（任意のClaude分析アダプターも可）
+- `daily` 運用で取得したニュースをSQLiteに蓄積し、後からの検証を再現可能にする
 - 複数銘柄ユニバースを1つの資金で回すバックテストと日次運用
 - ポジション上限・損切り・トレーリングストップを持つリスク管理層
 - 売買しなかった日も含めて全判断を残す判断ログ（JSONL / SQLite）
@@ -115,9 +116,9 @@ python -m ai_stock_trader.cli reject  --config config.toml --date 2025-02-28 --s
 ai_stock_trader/
   domain/     依存ゼロの中核: models, indicators, strategy, news_scoring,
               portfolio, risk, market, universe, metrics
-  ports.py    Protocolのみ: PriceSource, NewsSource, NewsAnalyzer, Broker,
-              DecisionStore, StateStore
-  adapters/   外界とのI/O: prices(CSV), news(RSS/Claude), broker(Simulated),
+  ports.py    Protocolのみ: PriceSource, NewsSource, NewsAnalyzer, NewsArchive,
+              Broker, DecisionStore, StateStore
+  adapters/   外界とのI/O: prices(CSV), news(RSS/Claude/matching), broker(Simulated),
               store(JSONL / SQLite)
   app/        ユースケース: engine, backtest, paper, daily, status
   config.py   TOML設定
@@ -152,6 +153,18 @@ ai_stock_trader/
 
 銘柄ごとに営業日が違う場合（売買停止、上場時期）は、その日に足がある銘柄だけを評価し、足が無い銘柄は直近終値で評価額に据え置きます。
 
+### ニュースの扱い
+
+RSSの見出しは3段階で処理されます。
+
+1. **銘柄紐付け**（`adapters/news/matching.py`）— `[data.news_aliases]` に銘柄コードと会社名・略称を登録しておくと、見出し・要約に含まれるかで自動タグ付けします。何にも一致しなかった記事は市場全体のニュースとして扱われ、全銘柄に効きます。他銘柄にタグ付けされた記事は対象外の銘柄には一切影響しません。
+2. **重複排除**（`domain/news_scoring.py:dedupe`）— URLを鍵に、無ければ「タイトル＋発行日」を鍵に、同じ記事の転載を1件にまとめます。
+3. **減衰窓での重み付け**（`relevant_weighted_items` / `decay_weight`）— 発行日ちょうどのバーにしか効かなかった以前の実装と違い、`news_window_days`（既定3営業日）以内の記事を、`news_decay_rate`（既定0.5）で発行からの経過日数ぶん減衰させたスコアで加味します。未来の記事（ルックアヘッド）は常に重み0です。
+
+`KeywordNewsAnalyzer` はこの重み付き記事リストを受け取り、ポジティブ／ネガティブ語のヒット数を重みで加算してからスコア化します。`ClaudeNewsAnalyzer` を使う場合も同じ `(NewsItem, weight)` のリストを受け取るので、どちらのアナライザーでも減衰の効果は同じです。
+
+`published_at`（発行日）と `fetched_at`（取得日）は別フィールドです。RSSフィードは直近の一定件数しか公開しないため、`daily` は毎回の取得結果をSQLiteの `news_items` テーブルに蓄積し（`account` に紐付かない、DBファイル共有のアーカイブです）、翌日以降は「取得できていた記事の履歴」から減衰窓ぶんを読み出して使います。フィードの窓から記事が落ちても、既に取得済みなら判断に使い続けられます。`backtest` / `paper` は都度の取得結果をそのまま使う一括検証向けなので、この蓄積は行いません。
+
 ### 責務の分離
 
 - **Strategy** は「買いたい／売りたい」と根拠だけを返し、数量には関与しません。
@@ -179,13 +192,12 @@ SQLiteのテーブルは `accounts` / `positions` / `decisions` / `trades` / `eq
 
 ニュース判定はオフラインで再現できる `KeywordNewsAnalyzer` が既定です。Claudeを使う場合は `ANTHROPIC_API_KEY` を設定し、アプリケーションコードから `ClaudeNewsAnalyzer` を明示的に選択してください。APIキーをリポジトリへ保存しないでください。
 
-**現時点のニュース処理には既知の弱点があります。** RSSの `pubDate` は解析しますが、銘柄との紐付けが無いため同じスコアが全銘柄に一律で乗り、発行日と完全一致する日付にしか効きません。複数銘柄運用ではこの影響が大きいので、次のマイルストーンで対応します。
+ニュースの銘柄紐付けは `[data.news_aliases]` に登録した会社名・略称との単純な部分一致です。表記ゆれ（正式名称と通称、英語表記）まで登録しないと拾い漏れがあります。より頑健にするには、銘柄マスタからのエイリアス自動生成や、あいまい一致・NLPベースの照合に置き換える余地があります。
 
 ## 次のマイルストーン
 
-1. ニュースの銘柄紐付け、減衰窓、取得時刻と発行時刻の分離、重複排除
-2. J-Quantsアダプターとデータ品質チェック（認証・利用規約を確認のうえ追加）
-3. FastAPI + ダッシュボード（判断ログとエクイティカーブの可視化、承認フローのUI化）
-4. ペーパー期間の評価が終わるまでライブ注文APIは追加しない
+1. J-Quantsアダプターとデータ品質チェック（認証・利用規約を確認のうえ追加）
+2. FastAPI + ダッシュボード（判断ログとエクイティカーブの可視化、承認フローのUI化）
+3. ペーパー期間の評価が終わるまでライブ注文APIは追加しない
 
-完了済み: 層構成の分離、Portfolio / RiskManager / Broker、統一評価ループ、SQLite永続化と日次実行、複数銘柄ユニバースとTOML設定。
+完了済み: 層構成の分離、Portfolio / RiskManager / Broker、統一評価ループ、SQLite永続化と日次実行、複数銘柄ユニバースとTOML設定、ニュースの銘柄紐付け・減衰窓・アーカイブ。

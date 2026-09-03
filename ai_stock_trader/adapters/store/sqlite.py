@@ -15,10 +15,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from ...domain.models import Decision, Fill, Order, Signal, Trade
+from ...domain.models import Decision, Fill, NewsItem, Order, Signal, Trade
 from ...domain.portfolio import Portfolio, Position
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -97,8 +97,18 @@ CREATE TABLE IF NOT EXISTS proposals (
     note TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (account, date, symbol)
 );
+CREATE TABLE IF NOT EXISTS news_items (
+    dedup_key TEXT PRIMARY KEY,
+    published_at TEXT NOT NULL,
+    fetched_at TEXT,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    symbols TEXT NOT NULL DEFAULT '[]'
+);
 CREATE INDEX IF NOT EXISTS decisions_by_date ON decisions (account, date);
 CREATE INDEX IF NOT EXISTS trades_by_date ON trades (account, date);
+CREATE INDEX IF NOT EXISTS news_by_published ON news_items (published_at);
 """
 
 PROPOSED = "PROPOSED"
@@ -351,9 +361,57 @@ class SqliteStore:
         rows = list(self._connection.execute(query, parameters))
         return [_decision_from_row(row) for row in reversed(rows)]
 
+    # --- news archive ---------------------------------------------------
+    # Unlike the tables above, this one is not scoped by ``account``: a
+    # headline is market data, not something one account owns, so every
+    # account sharing this database file draws from the same archive.
+
+    def save_news(self, items: Iterable[NewsItem]) -> int:
+        """Insert new items, skip ones already archived. Returns the count added."""
+        inserted = 0
+        for item in items:
+            cursor = self._connection.execute(
+                """
+                INSERT OR IGNORE INTO news_items
+                    (dedup_key, published_at, fetched_at, title, summary, url, symbols)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item.dedup_key,
+                    item.published_at.isoformat(),
+                    item.fetched_at.isoformat() if item.fetched_at else None,
+                    item.title,
+                    item.summary,
+                    item.url,
+                    json.dumps(list(item.symbols)),
+                ),
+            )
+            inserted += cursor.rowcount
+        return inserted
+
+    def load_news(self, since: date | None = None) -> list[NewsItem]:
+        query = "SELECT * FROM news_items"
+        parameters: tuple[Any, ...] = ()
+        if since is not None:
+            query += " WHERE published_at >= ?"
+            parameters = (since.isoformat(),)
+        query += " ORDER BY published_at"
+        return [_news_from_row(row) for row in self._connection.execute(query, parameters)]
+
 
 def _dump(payload: Iterable[dict[str, Any]]) -> str:
     return json.dumps(list(payload), ensure_ascii=False, default=str)
+
+
+def _news_from_row(row: sqlite3.Row) -> NewsItem:
+    return NewsItem(
+        published_at=date.fromisoformat(row["published_at"]),
+        title=row["title"],
+        summary=row["summary"],
+        url=row["url"],
+        symbols=tuple(json.loads(row["symbols"])),
+        fetched_at=date.fromisoformat(row["fetched_at"]) if row["fetched_at"] else None,
+    )
 
 
 def _decision_from_row(row: sqlite3.Row) -> Decision:

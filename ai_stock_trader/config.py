@@ -27,6 +27,9 @@ class AppConfig:
     csv: str | None = None
     symbols: tuple[str, ...] = ()
     rss: tuple[str, ...] = ()
+    # symbol -> aliases (company name, common abbreviations) used to tag
+    # fetched headlines with the symbols they are about.
+    news_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
     slippage_rate: float = 0.0
     market: MarketSpec = JAPAN
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
@@ -68,7 +71,9 @@ def load_config(path: str | Path) -> AppConfig:
         raise ValueError(f"unknown config sections: {', '.join(sorted(unknown))}")
 
     account = _section(raw, "account")
+    _reject_unknown_keys(account, "account", {"name", "capital", "database"})
     data = _section(raw, "data")
+    _reject_unknown_keys(data, "data", {"csv", "symbols", "rss", "news_aliases"})
     return AppConfig(
         account=account.get("name", "default"),
         capital=float(account.get("capital", 1_000_000)),
@@ -76,6 +81,7 @@ def load_config(path: str | Path) -> AppConfig:
         csv=data.get("csv"),
         symbols=tuple(data.get("symbols", ())),
         rss=tuple(data.get("rss", ())),
+        news_aliases=_news_aliases(data.get("news_aliases", {})),
         slippage_rate=float(_section(raw, "market").pop("slippage_rate", 0.0)),
         market=_build(MarketSpec, _section(raw, "market"), "market"),
         strategy=_build(StrategyConfig, _section(raw, "strategy"), "strategy"),
@@ -90,10 +96,24 @@ def _section(raw: dict[str, Any], name: str) -> dict[str, Any]:
     return dict(section)
 
 
-def _build(factory: type, values: dict[str, Any], name: str) -> Any:
-    values.pop("slippage_rate", None)
-    allowed = set(factory.__dataclass_fields__)
+def _reject_unknown_keys(values: dict[str, Any], name: str, allowed: set[str]) -> None:
     unknown = set(values) - allowed
     if unknown:
         raise ValueError(f"unknown keys in [{name}]: {', '.join(sorted(unknown))}")
+
+
+def _build(factory: type, values: dict[str, Any], name: str) -> Any:
+    values.pop("slippage_rate", None)
+    _reject_unknown_keys(values, name, set(factory.__dataclass_fields__))
     return factory(**values)
+
+
+def _news_aliases(raw: Any) -> dict[str, tuple[str, ...]]:
+    if not isinstance(raw, dict):
+        raise ValueError("[data.news_aliases] must be a table of symbol -> alias list")
+    result: dict[str, tuple[str, ...]] = {}
+    for symbol, aliases in raw.items():
+        if not isinstance(aliases, list) or not all(isinstance(alias, str) for alias in aliases):
+            raise ValueError(f"[data.news_aliases].{symbol} must be a list of strings")
+        result[symbol] = tuple(aliases)
+    return result

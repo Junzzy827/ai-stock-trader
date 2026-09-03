@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date
+from datetime import date, timedelta
 
+from .adapters.news.matching import tag_all
 from .adapters.news.rss import fetch_rss_news
 from .adapters.prices.csv_source import CsvPriceDataSource
 from .adapters.store.sqlite import APPROVED, REJECTED, SqliteStore
@@ -118,7 +119,9 @@ def main() -> None:
         raise SystemExit("at least two dates are required to execute a signal")
 
     strategy = TechnicalNewsStrategy(config.strategy)
-    news = [item for url in config.rss for item in fetch_rss_news(url)]
+    fetched_news = tag_all(
+        [item for url in config.rss for item in fetch_rss_news(url)], config.news_aliases
+    )
 
     if args.command == "backtest":
         result = run_backtest(
@@ -126,7 +129,7 @@ def main() -> None:
             strategy,
             config.capital,
             config.market.commission_rate,
-            news,
+            fetched_news,
             risk_config=config.risk,
             market=config.market,
             slippage_rate=config.slippage_rate,
@@ -141,7 +144,7 @@ def main() -> None:
     if args.command == "paper":
         result = PaperBroker(
             config.capital, config.market.commission_rate, config.risk, config.market
-        ).run(universe, strategy, args.log, news, append=args.append)
+        ).run(universe, strategy, args.log, fetched_news, append=args.append)
         _print(
             {
                 "log": args.log,
@@ -156,6 +159,13 @@ def main() -> None:
         return
 
     with SqliteStore(config.database, config.account) as store:
+        # Archive what was just fetched, then read the whole archive back:
+        # an RSS feed only exposes a moving window, so replaying a later
+        # backtest against "what was known" requires the accumulated history,
+        # not just today's fetch.
+        store.save_news(fetched_news)
+        since = universe.timeline[0] - timedelta(days=config.strategy.news_window_days)
+        archived_news = store.load_news(since=since)
         result = run_daily(
             store,
             universe,
@@ -164,7 +174,7 @@ def main() -> None:
             risk_config=config.risk,
             market=config.market,
             slippage_rate=config.slippage_rate,
-            news=news,
+            news=archived_news,
         )
         _print(result.to_dict())
 
