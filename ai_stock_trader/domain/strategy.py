@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..ports import NewsAnalyzer
 from .indicators import macd, rsi, sma
-from .models import NewsItem, OHLCV, Signal
-from .news import KeywordNewsAnalyzer, NewsAnalyzer
+from .models import BUY, HOLD, NewsItem, OHLCV, SELL, Signal
+from .news_scoring import KeywordNewsAnalyzer, news_by_date
 
 
 @dataclass(frozen=True)
@@ -35,9 +36,7 @@ class TechnicalNewsStrategy:
         long = sma(closes, self.config.long_sma)
         relative_strength = rsi(closes, self.config.rsi_period)
         macd_line, macd_signal = macd(closes)
-        news_by_day = {}
-        for item in news or []:
-            news_by_day.setdefault(item.published_at, []).append(item)
+        news_by_day = news_by_date(news or [])
 
         signals: list[Signal] = []
         for index, bar in enumerate(bars):
@@ -58,6 +57,6 @@ class TechnicalNewsStrategy:
             technical_score = sum(technical_parts) / len(technical_parts) if technical_parts else 0.0
             news_score, news_reason = self.news_analyzer.score(news_by_day.get(bar.date, []))
             score = technical_score * 0.7 + news_score * 0.3
-            action = "BUY" if score >= self.config.buy_threshold else "SELL" if score <= self.config.sell_threshold else "HOLD"
+            action = BUY if score >= self.config.buy_threshold else SELL if score <= self.config.sell_threshold else HOLD
             signals.append(Signal(bar.date, bar.symbol, action, score, "; ".join(reasons + [news_reason]), technical_score, news_score))
         return signals
