@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..ports import NewsAnalyzer
 from .indicators import macd, rsi, sma
-from .models import NewsItem, OHLCV, Signal
-from .news import KeywordNewsAnalyzer, NewsAnalyzer
+from .models import BUY, HOLD, NewsItem, OHLCV, SELL, Signal
+from .news_scoring import KeywordNewsAnalyzer, dedupe, relevant_weighted_items
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,15 @@ class StrategyConfig:
     rsi_period: int = 14
     buy_threshold: float = 0.15
     sell_threshold: float = -0.2
+    # A headline still counts a few days after publication, just less.
+    news_window_days: int = 3
+    news_decay_rate: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.news_window_days < 0:
+            raise ValueError("news_window_days must not be negative")
+        if not 0 < self.news_decay_rate <= 1:
+            raise ValueError("news_decay_rate must be in (0, 1]")
 
 
 class TechnicalNewsStrategy:
@@ -35,9 +45,7 @@ class TechnicalNewsStrategy:
         long = sma(closes, self.config.long_sma)
         relative_strength = rsi(closes, self.config.rsi_period)
         macd_line, macd_signal = macd(closes)
-        news_by_day = {}
-        for item in news or []:
-            news_by_day.setdefault(item.published_at, []).append(item)
+        news_items = dedupe(news or [])
 
         signals: list[Signal] = []
         for index, bar in enumerate(bars):
@@ -56,8 +64,11 @@ class TechnicalNewsStrategy:
                 technical_parts.append(momentum)
                 reasons.append("MACD bullish" if momentum > 0 else "MACD bearish")
             technical_score = sum(technical_parts) / len(technical_parts) if technical_parts else 0.0
-            news_score, news_reason = self.news_analyzer.score(news_by_day.get(bar.date, []))
+            window = relevant_weighted_items(
+                news_items, bar.symbol, bar.date, self.config.news_window_days, self.config.news_decay_rate
+            )
+            news_score, news_reason = self.news_analyzer.score(window)
             score = technical_score * 0.7 + news_score * 0.3
-            action = "BUY" if score >= self.config.buy_threshold else "SELL" if score <= self.config.sell_threshold else "HOLD"
+            action = BUY if score >= self.config.buy_threshold else SELL if score <= self.config.sell_threshold else HOLD
             signals.append(Signal(bar.date, bar.symbol, action, score, "; ".join(reasons + [news_reason]), technical_score, news_score))
         return signals

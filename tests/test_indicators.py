@@ -1,4 +1,4 @@
-from ai_stock_trader.indicators import ema, rsi, sma
+from ai_stock_trader.domain.indicators import ema, rsi, sma
 
 
 def test_sma_has_warmup_and_rolling_values():

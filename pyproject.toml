@@ -4,13 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-stock-trader"
-version = "0.1.0"
+version = "0.5.0"
 description = "A safe, semi-automatic stock-trading research and paper-trading foundation."
-requires-python = ">=3.10"
+requires-python = ">=3.11"  # tomllib
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+test = ["pytest>=8", "httpx>=0.27"]
+api = ["fastapi>=0.115", "uvicorn>=0.30"]
+
+[tool.setuptools.packages.find]
+include = ["ai_stock_trader*"]
+
+[tool.setuptools.package-data]
+ai_stock_trader = ["api/dashboard.html"]
 
 [project.scripts]
 ai-stock-trader = "ai_stock_trader.cli:main"

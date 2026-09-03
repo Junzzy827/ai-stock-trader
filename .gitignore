@@ -10,3 +10,11 @@ build/
 paper_trades.jsonl
 backtest_result.json
 
+
+# local run artifacts
+paper_decisions.jsonl
+paper_trades.jsonl
+
+# local state
+*.db
+*.db-journal

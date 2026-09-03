@@ -1,4 +1,7 @@
-"""Research-first building blocks for an AI-assisted stock trader."""
+"""Research-first building blocks for an AI-assisted stock trader.
 
-__version__ = "0.1.0"
+Layers: ``domain`` (pure logic), ``ports`` (interfaces), ``adapters`` (I/O)
+and ``app`` (use cases). The CLI is one entry point; a web API is another.
+"""
 
+__version__ = "0.2.0"

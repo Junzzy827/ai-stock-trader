@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Stock Trader</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-border: #262b36;
+    --text: #e6e8ec;
+    --muted: #8a93a6;
+    --accent: #4f8cff;
+    --buy: #35b56a;
+    --sell: #e0555a;
+    --hold: #8a93a6;
+    --warn: #d9a441;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .spacer { flex: 1; }
+  select, button, input {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: transparent; border-color: var(--sell); color: var(--sell); }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .card .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .value.pos { color: var(--buy); }
+  .value.neg { color: var(--sell); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--panel-border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .action { font-weight: 600; padding: 2px 8px; border-radius: 4px; font-size: 12px; display: inline-block; }
+  .action.BUY { color: var(--buy); background: rgba(53,181,106,0.12); }
+  .action.SELL { color: var(--sell); background: rgba(224,85,90,0.12); }
+  .action.HOLD { color: var(--hold); background: rgba(138,147,166,0.12); }
+  .status-badge { font-size: 11px; padding: 2px 6px; border-radius: 4px; }
+  .status-badge.PROPOSED { color: var(--warn); background: rgba(217,164,65,0.12); }
+  .status-badge.APPROVED { color: var(--buy); background: rgba(53,181,106,0.12); }
+  .status-badge.REJECTED { color: var(--sell); background: rgba(224,85,90,0.12); }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); padding: 12px 0; text-align: center; }
+  .reason { color: var(--muted); font-size: 12px; }
+  .note-row { display: flex; gap: 6px; margin-top: 8px; }
+  .note-row input { flex: 1; }
+  .decisions-scroll { max-height: 420px; overflow-y: auto; }
+  svg { width: 100%; height: 180px; display: block; }
+  #toast {
+    position: fixed; bottom: 20px; right: 20px; background: var(--panel);
+    border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 16px;
+    display: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Stock Trader</h1>
+  <select id="account-select"></select>
+  <div class="spacer"></div>
+  <span id="last-updated" class="muted"></span>
+</header>
+
+<main>
+  <div class="cards" id="summary-cards"></div>
+
+  <div class="panel">
+    <h2>エクイティカーブ</h2>
+    <svg id="equity-chart" viewBox="0 0 600 180" preserveAspectRatio="none"></svg>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <h2>保有ポジション</h2>
+      <table id="positions-table">
+        <thead><tr><th>銘柄</th><th class="num">数量</th><th class="num">平均取得単価</th><th class="num">逆指値</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty" id="positions-empty" hidden>保有中のポジションはありません</div>
+    </div>
+
+    <div class="panel">
+      <h2>翌営業日の候補</h2>
+      <div id="proposals-list"></div>
+      <div class="empty" id="proposals-empty" hidden>候補はありません</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>判断ログ（HOLDを含む）</h2>
+    <div class="decisions-scroll">
+      <table id="decisions-table">
+        <thead><tr><th>日付</th><th>銘柄</th><th>判断</th><th class="num">スコア</th><th>根拠</th><th>備考</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>約定履歴</h2>
+    <table id="trades-table">
+      <thead><tr><th>日付</th><th>銘柄</th><th>売買</th><th class="num">数量</th><th class="num">単価</th><th class="num">実現損益</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty" id="trades-empty" hidden>約定はまだありません</div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const state = { account: null };
+
+function fmt(n, digits = 0) {
+  if (n === null || n === undefined) return "-";
+  return Number(n).toLocaleString("ja-JP", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+function toast(message) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.style.display = "block";
+  setTimeout(() => { el.style.display = "none"; }, 3000);
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+async function loadAccounts() {
+  const accounts = await api("/api/accounts");
+  const select = document.getElementById("account-select");
+  select.innerHTML = accounts.map(a => `<option value="${a}">${a}</option>`).join("");
+  state.account = accounts[0];
+  select.value = state.account;
+  select.addEventListener("change", () => { state.account = select.value; refresh(); });
+}
+
+function renderSummary(status) {
+  const returnRate = status.metrics ? status.metrics.return_rate : null;
+  const cards = [
+    { label: "評価額", value: fmt(status.equity), cls: "" },
+    { label: "現金", value: fmt(status.cash), cls: "" },
+    { label: "リターン", value: returnRate === null ? "-" : (returnRate * 100).toFixed(2) + "%",
+      cls: returnRate > 0 ? "pos" : returnRate < 0 ? "neg" : "" },
+    { label: "最大ドローダウン", value: status.metrics ? "-" + (status.metrics.max_drawdown * 100).toFixed(2) + "%" : "-", cls: "" },
+    { label: "処理済み日付", value: status.last_processed_date || "-", cls: "" },
+  ];
+  document.getElementById("summary-cards").innerHTML = cards.map(c =>
+    `<div class="card"><div class="label">${c.label}</div><div class="value ${c.cls}">${c.value}</div></div>`
+  ).join("");
+}
+
+function renderChart(curve) {
+  const svg = document.getElementById("equity-chart");
+  if (curve.length < 2) { svg.innerHTML = ""; return; }
+  const values = curve.map(p => p.equity);
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const w = 600, h = 180, pad = 8;
+  const points = curve.map((p, i) => {
+    const x = pad + (i / (curve.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((p.equity - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const trendUp = values[values.length - 1] >= values[0];
+  const color = trendUp ? "#35b56a" : "#e0555a";
+  svg.innerHTML = `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2" />`;
+}
+
+function renderPositions(positions) {
+  const body = document.querySelector("#positions-table tbody");
+  document.getElementById("positions-empty").hidden = positions.length > 0;
+  body.innerHTML = positions.map(p => `
+    <tr>
+      <td>${p.symbol}</td>
+      <td class="num">${fmt(p.quantity)}</td>
+      <td class="num">${fmt(p.avg_price, 1)}</td>
+      <td class="num">${p.stop_price !== null ? fmt(p.stop_price, 1) : "-"}</td>
+    </tr>
+  `).join("");
+}
+
+function renderProposals(proposals) {
+  const list = document.getElementById("proposals-list");
+  document.getElementById("proposals-empty").hidden = proposals.length > 0;
+  list.innerHTML = proposals.map(p => `
+    <div class="panel" style="margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="action ${p.action}">${p.action}</span>
+        <strong>${p.symbol}</strong>
+        <span class="muted">${p.date}</span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="status-badge ${p.status}">${p.status}</span>
+      </div>
+      <div class="reason">${p.reason}</div>
+      ${p.status === "PROPOSED" ? `
+        <div class="note-row">
+          <input type="text" placeholder="メモ（任意）" data-note-for="${p.date}:${p.symbol}">
+          <button class="primary" onclick="decide('${p.date}','${p.symbol}','APPROVED')">承認</button>
+          <button class="danger" onclick="decide('${p.date}','${p.symbol}','REJECTED')">却下</button>
+        </div>
+      ` : `<div class="muted" style="margin-top:6px;">${p.note || ""}</div>`}
+    </div>
+  `).join("");
+}
+
+async function decide(date, symbol, status) {
+  const noteInput = document.querySelector(`[data-note-for="${date}:${symbol}"]`);
+  const note = noteInput ? noteInput.value : "";
+  try {
+    await api("/api/proposals/decide", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account: state.account, date, symbol, status, note }),
+    });
+    toast(`${symbol} を${status === "APPROVED" ? "承認" : "却下"}しました`);
+    refresh();
+  } catch (error) {
+    toast(`失敗: ${error.message}`);
+  }
+}
+
+function renderDecisions(decisions) {
+  const body = document.querySelector("#decisions-table tbody");
+  body.innerHTML = decisions.slice().reverse().map(d => `
+    <tr>
+      <td class="muted">${d.date}</td>
+      <td>${d.symbol}</td>
+      <td><span class="action ${d.action}">${d.action}</span></td>
+      <td class="num">${d.score.toFixed(2)}</td>
+      <td class="reason">${d.reason}</td>
+      <td class="muted">${d.note || ""}</td>
+    </tr>
+  `).join("");
+}
+
+function renderTrades(trades) {
+  const body = document.querySelector("#trades-table tbody");
+  document.getElementById("trades-empty").hidden = trades.length > 0;
+  body.innerHTML = trades.slice().reverse().map(t => `
+    <tr>
+      <td class="muted">${t.date}</td>
+      <td>${t.symbol}</td>
+      <td><span class="action ${t.action}">${t.action}</span></td>
+      <td class="num">${fmt(t.quantity)}</td>
+      <td class="num">${fmt(t.price, 1)}</td>
+      <td class="num ${t.realized_pnl > 0 ? 'value pos' : t.realized_pnl < 0 ? 'value neg' : ''}">${fmt(t.realized_pnl, 0)}</td>
+    </tr>
+  `).join("");
+}
+
+async function refresh() {
+  if (!state.account) return;
+  const [status, curve, trades] = await Promise.all([
+    api(`/api/status?account=${encodeURIComponent(state.account)}&recent=100`),
+    api(`/api/equity-curve?account=${encodeURIComponent(state.account)}`),
+    api(`/api/trades?account=${encodeURIComponent(state.account)}`),
+  ]);
+  renderSummary(status);
+  renderChart(curve);
+  renderPositions(status.positions);
+  renderProposals(status.pending_proposals);
+  renderDecisions(status.recent_decisions);
+  renderTrades(trades);
+  document.getElementById("last-updated").textContent = "更新: " + new Date().toLocaleTimeString("ja-JP");
+}
+
+(async function init() {
+  await loadAccounts();
+  await refresh();
+  setInterval(refresh, 30000);
+})();
+</script>
+</body>
+</html>

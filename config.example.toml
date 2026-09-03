@@ -1,0 +1,39 @@
+# Copy to config.toml and edit. Command-line flags override anything set here.
+
+[account]
+name = "paper1"
+capital = 3000000
+database = "trader.db"
+
+[data]
+csv = "data/sample_universe.csv"
+symbols = ["7203", "6758", "9984"]
+# rss = ["https://example.com/news.xml"]
+
+# Aliases used to tag a fetched headline with the symbols it is about.
+# An item that matches nothing stays market-wide and applies to every symbol.
+[data.news_aliases]
+7203 = ["トヨタ自動車", "トヨタ"]
+6758 = ["ソニーグループ", "ソニー"]
+9984 = ["ソフトバンクグループ", "ソフトバンク"]
+
+[market]
+lot_size = 100          # TSE standard unit
+commission_rate = 0.001
+slippage_rate = 0.0
+
+[strategy]
+short_sma = 5
+long_sma = 20
+rsi_period = 14
+buy_threshold = 0.15
+sell_threshold = -0.2
+news_window_days = 3    # a headline still counts a few days after publication
+news_decay_rate = 0.5   # halved each day it ages within the window
+
+[risk]
+max_position_weight = 0.3   # at most 30% of equity in one name
+cash_buffer = 0.05          # always keep 5% in cash
+stop_loss_pct = 0.07
+trailing_stop_pct = 0.12
+max_positions = 3
