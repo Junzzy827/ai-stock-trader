@@ -217,3 +217,18 @@ def test_the_news_archive_is_shared_across_accounts_in_one_file(tmp_path):
         alice.commit()
     with SqliteStore(path, "bob") as bob:
         assert [item.title for item in bob.load_news()] == ["shared item"]
+
+
+def test_list_accounts_returns_every_account_with_state_in_the_file(tmp_path):
+    path = tmp_path / "trader.db"
+    with SqliteStore(path, "alice") as alice:
+        alice.save_portfolio(stocked_portfolio(), date(2025, 1, 10))
+        alice.commit()
+    with SqliteStore(path, "bob") as bob:
+        bob.save_portfolio(stocked_portfolio(), date(2025, 1, 10))
+        bob.commit()
+        assert bob.list_accounts() == ["alice", "bob"]
+
+
+def test_list_accounts_is_empty_for_a_fresh_database(store):
+    assert store.list_accounts() == []

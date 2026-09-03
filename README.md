@@ -11,10 +11,11 @@
 - 売買しなかった日も含めて全判断を残す判断ログ（JSONL / SQLite）
 - SQLiteに状態を持ち、新しい足だけを処理する日次運用コマンド
 - TOML設定ファイルで、口座ごとの実行条件を再現可能にする
+- エクイティカーブ・判断ログ・承認フローを見るFastAPI製ダッシュボード（任意）
 
 ## クイックスタート
 
-Python 3.11以上（設定ファイルの読み込みに標準ライブラリの `tomllib` を使います）。外部依存はありません。
+Python 3.11以上（設定ファイルの読み込みに標準ライブラリの `tomllib` を使います）。コアに外部依存はありません。ダッシュボード（`serve`）だけは `pip install -e ".[api]"` でFastAPI / uvicornが必要です。
 
 ```bash
 python -m pytest
@@ -108,6 +109,28 @@ python -m ai_stock_trader.cli reject  --config config.toml --date 2025-02-28 --s
 
 `paper` は全期間を毎回再計算してJSONLに書き出すコマンドで、戦略を変えた直後の一括検証向けです。継続運用には `daily` を使ってください。
 
+## ダッシュボード
+
+`daily` を積み重ねたSQLiteの中身を見るためのWeb UIです。`api` エクストラ（FastAPI / uvicorn）が必要で、コア（`backtest` / `paper` / `daily` / `status`）は入れなくても動きます。
+
+```bash
+pip install -e ".[api]"
+python -m ai_stock_trader.cli serve --config config.toml
+# http://127.0.0.1:8000 を開く
+```
+
+画面には評価額・現金・リターン・最大ドローダウンのサマリー、エクイティカーブ、保有ポジション、翌営業日の候補、判断ログ（HOLDを含む）、約定履歴が並びます。候補には承認・却下ボタンがあり、CLIの `approve` / `reject` と同じ `decide_proposal` を呼ぶので記録される内容は同一です。口座はヘッダーのセレクタで切り替えられ、同じDBファイル内の全口座を一覧します。
+
+公開しているのはほぼ読み取り専用のAPIで、書き込みは「候補への承認・却下」だけです。バックテストの実行や `daily` の起動はダッシュボードからはできません（cron側の責務のままにしています）。エンドポイントは以下の4つです。
+
+| メソッド | パス | 内容 |
+| --- | --- | --- |
+| GET | `/api/accounts` | DBファイル内の全口座 |
+| GET | `/api/status?account=` | `status` コマンドと同じ内容 |
+| GET | `/api/equity-curve?account=` | 日次評価額 |
+| GET | `/api/trades?account=` | 約定履歴 |
+| POST | `/api/proposals/decide` | 候補への承認・却下 |
+
 ## 構成
 
 依存の向きを内側（`domain`）に固定した層構成です。
@@ -121,8 +144,9 @@ ai_stock_trader/
   adapters/   外界とのI/O: prices(CSV), news(RSS/Claude/matching), broker(Simulated),
               store(JSONL / SQLite)
   app/        ユースケース: engine, backtest, paper, daily, status
+  api/        任意のFastAPIダッシュボード。app/ を呼ぶだけで、独自ロジックは持たない
   config.py   TOML設定
-  cli.py      入口。将来のWeb APIも同じ app/ を呼ぶ
+  cli.py      入口
 ```
 
 ### バックテストと運用を同じループで回す
@@ -197,7 +221,6 @@ SQLiteのテーブルは `accounts` / `positions` / `decisions` / `trades` / `eq
 ## 次のマイルストーン
 
 1. J-Quantsアダプターとデータ品質チェック（認証・利用規約を確認のうえ追加）
-2. FastAPI + ダッシュボード（判断ログとエクイティカーブの可視化、承認フローのUI化）
-3. ペーパー期間の評価が終わるまでライブ注文APIは追加しない
+2. ペーパー期間の評価が終わるまでライブ注文APIは追加しない
 
-完了済み: 層構成の分離、Portfolio / RiskManager / Broker、統一評価ループ、SQLite永続化と日次実行、複数銘柄ユニバースとTOML設定、ニュースの銘柄紐付け・減衰窓・アーカイブ。
+完了済み: 層構成の分離、Portfolio / RiskManager / Broker、統一評価ループ、SQLite永続化と日次実行、複数銘柄ユニバースとTOML設定、ニュースの銘柄紐付け・減衰窓・アーカイブ、FastAPIダッシュボード。

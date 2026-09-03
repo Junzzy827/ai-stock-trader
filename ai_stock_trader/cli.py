@@ -61,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
         decide.add_argument("--symbol", required=True)
         decide.add_argument("--note", default="")
 
+    serve = subparsers.add_parser("serve", help="serve the dashboard (requires the api extra)")
+    _add_account_arguments(serve)
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+
     return parser
 
 
@@ -95,6 +100,18 @@ def _print(payload: dict) -> None:
 def main() -> None:
     args = build_parser().parse_args()
     config = resolve_config(args)
+
+    if args.command == "serve":
+        try:
+            import uvicorn
+
+            from .api.app import create_app
+        except ImportError as error:
+            raise SystemExit(
+                "the dashboard requires the api extra: pip install 'ai-stock-trader[api]'"
+            ) from error
+        uvicorn.run(create_app(config.database, config.account), host=args.host, port=args.port)
+        return
 
     if args.command in ("status", "approve", "reject"):
         with SqliteStore(config.database, config.account) as store:

@@ -160,6 +160,15 @@ class SqliteStore:
             self.rollback()
         self.close()
 
+    def list_accounts(self) -> list[str]:
+        """Every account with state in this file, not just ``self.account``.
+
+        A dashboard needs this to offer an account switcher without already
+        knowing what has been created.
+        """
+        rows = self._connection.execute("SELECT account FROM accounts ORDER BY account")
+        return [row["account"] for row in rows]
+
     # --- account state -------------------------------------------------
     def load_portfolio(self) -> Portfolio | None:
         row = self._connection.execute(
