@@ -32,7 +32,7 @@ class BacktestResult:
         return self.metrics.return_rate
 
     @property
-    def buy_and_hold_return_rate(self) -> float:
+    def buy_and_hold_return_rate(self) -> float | None:
         return self.metrics.buy_and_hold_return_rate
 
     def to_dict(self) -> dict[str, Any]:

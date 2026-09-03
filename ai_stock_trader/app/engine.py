@@ -37,15 +37,29 @@ def run_engine(
     broker: Broker,
     store: DecisionStore | None = None,
     news: list[NewsItem] | None = None,
+    execute_after: Date | None = None,
 ) -> EngineResult:
+    """Evaluate ``bars``, executing only those after ``execute_after``.
+
+    Earlier bars are still fed to the strategy so indicators keep their warm-up
+    history; they simply are not traded again. That is what lets a daily run
+    resume from a stored portfolio instead of replaying the whole history.
+    """
     if not bars:
         return EngineResult(portfolio, (), (), (), (), None)
     signals = strategy.generate(bars, news)
+    first_index = _first_executable_index(bars, execute_after)
+    if first_index is None:
+        return EngineResult(portfolio, tuple(signals), (), (), (), signals[-1])
+
     trades: list[Trade] = []
     decisions: list[Decision] = []
-    equity_curve: list[tuple[Date, float]] = [(bars[0].date, portfolio.cash)]
+    opening = bars[first_index - 1]
+    equity_curve: list[tuple[Date, float]] = [
+        (opening.date, portfolio.equity({opening.symbol: opening.close}))
+    ]
 
-    for index in range(1, len(bars)):
+    for index in range(first_index, len(bars)):
         signal = signals[index - 1]
         reference = bars[index - 1]
         bar = bars[index]
@@ -104,6 +118,13 @@ def run_engine(
         equity_curve=tuple(equity_curve),
         pending_signal=signals[-1] if signals else None,
     )
+
+
+def _first_executable_index(bars: list[OHLCV], execute_after: Date | None) -> int | None:
+    for index in range(1, len(bars)):
+        if execute_after is None or bars[index].date > execute_after:
+            return index
+    return None
 
 
 def _as_trade(fill: Fill, portfolio: Portfolio) -> Trade:

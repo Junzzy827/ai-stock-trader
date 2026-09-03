@@ -7,7 +7,8 @@
 - RSSニュースとキーワード分析、任意のClaude分析アダプター
 - 終値で判断し、翌バーの始値で約定するバックテスト
 - ポジション上限・損切り・トレーリングストップを持つリスク管理層
-- 売買しなかった日も含めて全判断を残すJSONL判断ログ
+- 売買しなかった日も含めて全判断を残す判断ログ（JSONL / SQLite）
+- SQLiteに状態を持ち、新しい日足だけを処理する日次運用コマンド
 
 ## クイックスタート
 
@@ -25,6 +26,28 @@ python -m ai_stock_trader.cli paper \
 単元は100株なので、`--capital` は「株価×100」を十分に上回る必要があります。1株単位の市場を試す場合は `--lot-size 1` を指定します。
 
 RSSを使う場合は `--rss URL` を追加します（複数指定可）。取得に失敗した場合は、運用を止めて原因を確認してください。
+
+## 日次運用
+
+`daily` はSQLiteに現金・ポジション・逆指値・処理済み日付を保存し、**前回以降の新しい足だけ**を処理します。毎朝cronから同じコマンドを叩く運用を想定しています。
+
+```bash
+# 初回は手持ちのヒストリを取り込み、以後は差分だけ処理する
+python -m ai_stock_trader.cli daily \
+  --csv data/prices_7203.csv --symbol 7203 --db trader.db \
+  --capital 1000000 --max-weight 0.3 --stop-loss 0.07
+
+# いま何を持っていて、翌営業日の候補は何か
+python -m ai_stock_trader.cli status --db trader.db
+
+# 候補に対する人間の判断を記録する
+python -m ai_stock_trader.cli approve --db trader.db --date 2025-01-23 --symbol 7203 --note "決算確認済み"
+python -m ai_stock_trader.cli reject  --db trader.db --date 2025-01-23 --symbol 7203 --note "地合いが悪い"
+```
+
+同じ日を二度流しても状態は進みません（`up_to_date: true`）。書き込みは1回の実行につき1トランザクションで、`commit` されるまで `last_processed_date` は進まないため、途中で落ちた実行は次回そのままやり直されます。口座は `--account` で分けられ、同じDBファイルに複数口座を並べられます。
+
+`paper` は全期間を毎回再計算してJSONLに書き出すコマンドで、戦略を変えた直後の一括検証向けです。継続運用には `daily` を使ってください。
 
 CSVは `date,symbol,open,high,low,close,volume` 形式です。`symbol`列は省略できます。
 
@@ -53,8 +76,8 @@ ai_stock_trader/
   ports.py    Protocolのみ: PriceSource, NewsSource, NewsAnalyzer, Broker,
               DecisionStore
   adapters/   外界とのI/O: prices(CSV), news(RSS/Claude), broker(Simulated),
-              store(JSONL)
-  app/        ユースケース: engine, backtest, paper
+              store(JSONL / SQLite)
+  app/        ユースケース: engine, backtest, paper, daily, status
   cli.py      入口。将来のWeb APIも同じ app/ を呼ぶ
 ```
 
@@ -73,6 +96,8 @@ ai_stock_trader/
 
 バックテストと日次運用の違いは「どのバーを渡すか」と「どこへ記録するか」だけです。判断経路が同一なので、検証結果と運用結果が構造的に乖離しません。ライブ発注を足す場合も、`Broker` ポートの別実装を差し込むだけで中核は変わりません。
 
+日次運用では `execute_after` に前回の処理日を渡します。それ以前の足は指標のウォームアップとして戦略には渡されますが、再約定はしません。全期間を一括で流した場合と、1日ずつ差分で流した場合が同じ状態に収束することはテストで固定しています。
+
 ### 責務の分離
 
 - **Strategy** は「買いたい／売りたい」と根拠だけを返し、数量には関与しません。
@@ -80,9 +105,13 @@ ai_stock_trader/
 - **Broker** が約定価格を決めます。成行は始値、逆指値はバーが引値を貫いた場合に `min(始値, 逆指値)` で約定するため、ギャップダウンを楽観視しません。
 - **Portfolio** が状態の唯一の持ち主です。
 
-### 判断ログ
+### 判断ログと承認フロー
 
-`paper` は1営業日1行のJSONLを書きます。約定だけでなく、見送った日とその理由（`already holding` / `insufficient cash for one lot` / `stopped out` など）も残るため、半自動運用で「なぜ何もしなかったか」を後から追えます。最終バーのシグナルは約定対象のバーがまだ無いので、`pending_signal`（翌営業日の発注候補）として別に出力します。
+約定だけでなく、見送った日とその理由（`already holding` / `insufficient cash for one lot` / `stopped out` など）も1営業日1件で残ります。半自動運用で知りたいのは「なぜ何もしなかったか」なので、HOLDの日を捨てません。`paper` はJSONL、`daily` はSQLiteに書きます。
+
+最終バーのシグナルは約定対象のバーがまだ無いため、`pending_signal`（翌営業日の発注候補）として分けて出力し、`daily` では `proposals` テーブルに `PROPOSED` で保存します。`approve` / `reject` で人間の判断と理由が記録されるので、「AIの提案と人間の判断のズレ」が後から集計できます。
+
+SQLiteのテーブルは `accounts` / `positions` / `decisions` / `trades` / `equity_history` / `proposals` の6つです。`meta.schema_version` にスキーマ版を持たせてあります。
 
 ### 評価指標
 
@@ -98,9 +127,10 @@ ai_stock_trader/
 
 ## 次のマイルストーン
 
-1. SQLiteの `DecisionStore` と日次実行ユースケース（`app/daily.py`）、ポジション状態の永続化
-2. ニュースの銘柄紐付け、減衰窓、取得時刻と発行時刻の分離、重複排除
-3. J-Quantsアダプターとデータ品質チェック（認証・利用規約を確認のうえ追加）
-4. 複数銘柄ユニバースと設定ファイル（TOML）化
-5. FastAPI + ダッシュボード（判断ログとエクイティカーブの可視化、発注候補の承認フロー）
-6. ペーパー期間の評価が終わるまでライブ注文APIは追加しない
+1. ニュースの銘柄紐付け、減衰窓、取得時刻と発行時刻の分離、重複排除
+2. J-Quantsアダプターとデータ品質チェック（認証・利用規約を確認のうえ追加）
+3. 複数銘柄ユニバースと設定ファイル（TOML）化
+4. FastAPI + ダッシュボード（判断ログとエクイティカーブの可視化、承認フローのUI化）
+5. ペーパー期間の評価が終わるまでライブ注文APIは追加しない
+
+完了済み: 層構成の分離、Portfolio / RiskManager / Broker、統一評価ループ、SQLite永続化と日次実行。

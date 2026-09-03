@@ -1,33 +1,17 @@
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
+
+from conftest import START, StubStrategy, series
 
 from ai_stock_trader.adapters.broker.simulated import SimulatedBroker
 from ai_stock_trader.app.engine import run_engine
 from ai_stock_trader.domain.market import MarketSpec
-from ai_stock_trader.domain.models import BUY, HOLD, OHLCV, SELL, Signal
+from ai_stock_trader.domain.models import BUY, HOLD, SELL
 from ai_stock_trader.domain.portfolio import Portfolio
 from ai_stock_trader.domain.risk import RiskConfig, RiskManager
 
 SPEC = MarketSpec(lot_size=100, commission_rate=0.0)
-START = date(2025, 1, 1)
-
-
-class StubStrategy:
-    """Emits a fixed action per bar so engine behaviour is isolated."""
-
-    def __init__(self, actions: list[str]):
-        self.actions = actions
-
-    def generate(self, bars, news=None):
-        return [
-            Signal(bar.date, bar.symbol, self.actions[index], 1.0, "stub", 1.0, 0.0)
-            for index, bar in enumerate(bars)
-        ]
-
-
-def series(rows: list[tuple[float, float, float, float]]) -> list[OHLCV]:
-    return [OHLCV(START + timedelta(days=i), "TEST", *row) for i, row in enumerate(rows)]
 
 
 def run(bars, actions, risk_config=None, cash=100_000):

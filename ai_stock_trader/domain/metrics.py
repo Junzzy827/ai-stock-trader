@@ -15,7 +15,8 @@ TRADING_DAYS_PER_YEAR = 252
 @dataclass(frozen=True)
 class PerformanceMetrics:
     return_rate: float
-    buy_and_hold_return_rate: float
+    # None when there is no single instrument to compare against.
+    buy_and_hold_return_rate: float | None
     max_drawdown: float
     sharpe_ratio: float | None
     win_rate: float | None
@@ -76,7 +77,7 @@ def compute(
     equity_curve: Sequence[tuple[Date, float]],
     trades: Sequence[Trade],
     initial_cash: float,
-    buy_and_hold_return_rate: float,
+    buy_and_hold_return_rate: float | None,
     total_commission: float,
 ) -> PerformanceMetrics:
     final_equity = equity_curve[-1][1] if equity_curve else initial_cash
